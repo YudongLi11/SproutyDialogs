@@ -29,6 +29,8 @@ func generate(node: SproutyDialogsDialogueParser.ASTNode, dict: Dictionary, vari
 	if attrs_value.is_valid_float():
 		if float(attrs_value) >= 0.0:
 			speed_value = float(attrs_value)
+	if not dict.has("speed"):
+		dict["speed"] = []
 	dict["speed"].append({
 		"value": speed_value,
 		"start": start_pos,

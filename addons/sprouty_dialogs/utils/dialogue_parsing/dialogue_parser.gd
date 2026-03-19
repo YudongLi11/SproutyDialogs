@@ -24,7 +24,7 @@ func _scan_tags_folder() -> void:
 	var folder_path: String = "res://addons/sprouty_dialogs/utils/dialogue_parsing/tags"
 	var dir: DirAccess = DirAccess.open(folder_path)
 	if not dir:
-		printerr("[Sprouty Dialogs] Error: Could not open tags directory. No custom tags will be registered.")
+		push_warning("[Sprouty Dialogs] Error: Could not open tags directory. No custom tags will be registered.")
 		return
 
 	dir.list_dir_begin()
@@ -43,7 +43,7 @@ func _register_tag_processor(path: String) -> void:
 		return
 	var tag_processor: SproutyDialogsTagProcessor = script.new()
 	if not tag_processor or not tag_processor.has_method("get_tag_name"):
-		printerr("[Sprouty Dialogs] Warning: Script at %s does not implement get_tag_name() method. Skipping." % path)
+		push_warning("[Sprouty Dialogs] Warning: Script at %s does not implement get_tag_name() method. Skipping." % path)
 		return
 	var tag_name: String = tag_processor.get_tag_name()
 	if tag_name == null or tag_name == "":
@@ -72,24 +72,24 @@ func _parse_dialogue_text() -> void:
 func _construct_ast(parsed_text: String) -> void:
 	ast_root = ASTNode.new("root")
 	var stack: ASTStack = ASTStack.new([ast_root])
-	var i: int = 0
-	var n: int = parsed_text.length()
-	var text_buffer: String = ""
+	var pos: int = 0 # Current index into the parsed text string
+	var length: int = parsed_text.length() # Total length of parsed text, cached to avoid repeated calls in the loop
+	var text_buffer: String = "" # Buffer accumulating plain text characters between tags
 
-	while i < n:
-		var character: String = parsed_text[i]
-		if character == "\\" and i + 1 < n:
+	while pos < length:
+		var character: String = parsed_text[pos] # The character at the current index
+		if character == "\\" and pos + 1 < length:
 			# Handle escape character
-			if parsed_text[i + 1] in ["[", "]", "\\"]:
-				text_buffer += parsed_text[i + 1]
-				i += 2
+			if parsed_text[pos + 1] in ["[", "]", "\\"]:
+				text_buffer += parsed_text[pos + 1]
+				pos += 2
 			else:
 				text_buffer += character
-				i += 1
+				pos += 1
 			continue
 		if character == "[":
 			# Try to parse tag first. Only flush existing text_buffer if the tag is recognized.
-			var tag_info: Dictionary = _parse_tag(parsed_text, i)
+			var tag_info: Dictionary = _parse_tag(parsed_text, pos)
 			if tag_info != {}:
 				# If we have buffered text, flush it before inserting a tag node
 				if text_buffer != "":
@@ -97,22 +97,22 @@ func _construct_ast(parsed_text: String) -> void:
 					text_node.content = text_buffer
 					stack.back().add_child(text_node)
 					text_buffer = ""
-				var tag_name: String = tag_info["name"]
-				var is_end: bool = tag_info["is_end"]
-				var attributes: Dictionary = tag_info["attributes"]
-				var end_pos: int = tag_info["end_pos"]
+				var tag_name: String = tag_info["name"] # The name of the parsed tag (e.g. "speed", "wait")
+				var is_end: bool = tag_info["is_end"] # Whether this is a closing tag (e.g. [/speed])
+				var attributes: Dictionary = tag_info["attributes"] # Key-value pairs parsed from the tag (e.g. {"speed": 0.05})
+				var end_pos: int = tag_info["end_pos"] # The index of the closing bracket in the original string
 
 				if is_end:
 					if stack.size() <= 1:
 						# Mismatched end tag, ignore or handle error
-						printerr("[Sprouty Dialogs] Warning: Mismatched end tag [%s] at position %s." % [tag_name, str(i)])
-						i = end_pos + 1
+						push_warning("[Sprouty Dialogs] Warning: Mismatched end tag [%s] at position %s." % [tag_name, str(pos)])
+						pos = end_pos + 1
 						continue
 					if stack.back().name == tag_name:
 						stack.pop()
 					else:
 						# Mismatched end tag, ignore or handle error
-						printerr("[Sprouty Dialogs] Warning: Mismatched end tag [%s] at position %s. Expected [/%s]." % [tag_name, str(i), stack.back().name])
+						push_warning("[Sprouty Dialogs] Warning: Mismatched end tag [%s] at position %s. Expected [/%s]." % [tag_name, str(pos), stack.back().name])
 				else:
 					# Handle start tag
 					var new_node: ASTNode = ASTNode.new(tag_name)
@@ -120,21 +120,21 @@ func _construct_ast(parsed_text: String) -> void:
 					stack.back().add_child(new_node)
 					if _tag_processors.has(tag_name) and _tag_processors[tag_name].is_block():
 						stack.push(new_node)
-				i = end_pos + 1
+				pos = end_pos + 1
 			else:
 				# Not a recognized tag: append the whole bracketed substring to buffer
-				var close_pos: int = parsed_text.find("]", i)
+				var close_pos: int = parsed_text.find("]", pos) # Index of the closing bracket, or -1 if not found
 				if close_pos == -1:
 					# No closing bracket: just append the '[' character
 					text_buffer += character
-					i += 1
+					pos += 1
 				else:
 					# Append the entire '[...]' fragment so bbcode-like tags stay intact
-					text_buffer += parsed_text.substr(i, close_pos - i + 1)
-					i = close_pos + 1
+					text_buffer += parsed_text.substr(pos, close_pos - pos + 1)
+					pos = close_pos + 1
 		else:
 			text_buffer += character
-			i += 1
+			pos += 1
 	if text_buffer != "":
 		var text_node: ASTNode = ASTNode.new("text")
 		text_node.content = text_buffer
@@ -142,8 +142,8 @@ func _construct_ast(parsed_text: String) -> void:
 		text_buffer = ""
 	if stack.size() > 1:
 		# Unclosed tags at the end, could handle error or ignore
-		printerr("[Sprouty Dialogs] Warning: Unclosed tags at the end of dialogue text.")
-	pass
+		push_warning("[Sprouty Dialogs] Warning: Unclosed tags at the end of dialogue text.")
+
 
 
 func _transform_ast(node: ASTNode) -> Array[ASTNode]:
@@ -186,7 +186,7 @@ func _parse_tag(input: String, start: int) -> Dictionary:
 	var attrs: Dictionary = {}
 	# Handle shorthand form like [name=value]
 	if tag_name.find("=") != -1:
-		var kv: PackedStringArray = tag_name.split("=", false)
+		var kv: PackedStringArray = tag_name.split("=", false) # key-value pair from the tag name
 		tag_name = kv[0]
 		var value: String = ""
 		if kv.size() > 1:
@@ -218,32 +218,32 @@ func _parse_tag(input: String, start: int) -> Dictionary:
 
 # Tokenizer that splits a tag content string by spaces but preserves quoted substrings
 func _split_tag_parts(content: String) -> PackedStringArray:
-	var parts: Array = []
-	var cur: String = ""
-	var in_quote: String = ""
-	var i: int = 0
-	var n: int = content.length()
-	while i < n:
-		var c: String = content[i]
-		if (c == '"' or c == "'"):
+	var parts: Array = [] # Collected tokens after splitting
+	var cur: String = "" # Current token being built character by character
+	var in_quote: String = "" # The quote character that opened the current quoted section, or empty if not in quotes
+	var pos: int = 0 # Current index into the content string
+	var length: int = content.length() # Total length of content, cached to avoid repeated calls in the loop
+	while pos < length:
+		var character: String = content[pos] # The character at the current index
+		if (character == '"' or character == "'"):
 			# toggle quote state and include the quote in the token so later code can trim it
 			if in_quote == "":
-				in_quote = c
-				cur += c
-			elif in_quote == c:
-				cur += c
+				in_quote = character
+				cur += character
+			elif in_quote == character:
+				cur += character
 				in_quote = ""
 			else:
 				# different quote character inside another quote: just append
-				cur += c
-		elif c == " " and in_quote == "":
+				cur += character
+		elif character == " " and in_quote == "":
 			if cur != "":
 				parts.append(cur)
 				cur = ""
 			# else skip additional spaces
 		else:
-			cur += c
-		i += 1
+			cur += character
+		pos += 1
 	if cur != "":
 		parts.append(cur)
 	return PackedStringArray(parts)
